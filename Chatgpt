@@ -1,1 +1,118 @@
+"use client";
+
+import React, { useState, useEffect } from "react"; import TemplateTypeSelector from "@/app/home/downloads/template/components/TemplateTypeSelector"; import TemplateSelector from "@/app/home/downloads/template/components/TemplateSelector"; import TemplateTable from "@/app/home/downloads/template/components/TemplateTable"; import Modal from "@/app/home/downloads/template/components/Modal"; import DateSelector from "@/components/DateSelector"; import { availableTemplateTypes, availableTemplate } from "@/utils/dataFetch"; import { protectedApi } from "@/utils/api";
+
+interface TemplateType { template_type_id: string; template_type_name: string; template_type_format: string; }
+
+interface TemplateItem { line_item_id: string; class: string; report: string; account: string; subclass: string; subclass2: string; subaccount: string; }
+
+interface Template { template_id: string; template_type_id: string; template_name: string; template_items: TemplateItem[]; }
+
+interface TemplateWithSelectors extends Template { selectedPeriod: string | null; startDate: string; endDate: string; }
+
+const Page: React.FC = () => { const [templateTypeList, setTemplateTypeList] = useState<TemplateType[]>([]); const [selectedTemplateType, setSelectedTemplateType] = useState<TemplateType | null>(null); const [selectedTemplates, setSelectedTemplates] = useState<TemplateWithSelectors[]>([]); const [isModalOpen, setIsModalOpen] = useState<boolean>(false); const [currentTemplate, setCurrentTemplate] = useState<TemplateWithSelectors | null>(null);
+
+useEffect(() => { const fetchData = async () => { const data = await availableTemplateTypes(); setTemplateTypeList(data); }; fetchData(); }, []);
+
+const handleTemplateTypeSelect = (templateTypeName: string) => { const selectedType = templateTypeList.find(templateType => templateType.template_type_name === templateTypeName) || null; setSelectedTemplateType(selectedType); setCurrentTemplate(null); };
+
+const handleTemplateSelect = async (templateId: string) => { if (!selectedTemplateType) return;
+
+const data = await availableTemplate(selectedTemplateType.template_type_id);
+const selectedTemplate = data.find((template: Template) => template.template_id === templateId);
+
+if (selectedTemplate) {
+  setCurrentTemplate({
+    ...selectedTemplate,
+    selectedPeriod: selectedTemplateType.template_type_format === "vertical" ? null : "",
+    startDate: selectedTemplateType.template_type_format === "vertical" ? "" : "",
+    endDate: selectedTemplateType.template_type_format === "vertical" ? "" : "",
+  });
+}
+
+};
+
+const handleAddToList = () => { if (currentTemplate) { setSelectedTemplates(prevTemplates => [...prevTemplates, { ...currentTemplate }]); setCurrentTemplate(null); } };
+
+const handleDownloadTemplate = async () => { if (selectedTemplates.some(template => template.selectedPeriod === null && template.startDate === "")) { alert("Please fill in all required fields for each template before downloading."); return; }
+
+try {
+  const templates = selectedTemplates.map(template => ({
+    template_id: template.template_id,
+    template_type_id: template.template_type_id,
+    ...(template.selectedPeriod !== null ? { period: template.selectedPeriod } : {}),
+    ...(template.startDate ? { date_1: template.startDate } : {}),
+    ...(template.endDate ? { date_2: template.endDate } : {}),
+  }));
+
+  const response = await protectedApi.post(
+    `http://localhost:8000/generate-template-with-date-columns-multiple-sheets/`,
+    templates,
+    { headers: { 'Content-Type': 'application/json' }, responseType: "blob" }
+  );
+
+  if (response.status === 200) {
+    const blob = new Blob([response.data], { type: response.headers["content-type"] });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const contentDisposition = response.headers["content-disposition"];
+    const filename = contentDisposition ? contentDisposition.split("filename=")[1].replace(/"/g, "") : "templates.xlsx";
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  } else {
+    alert("Failed to download the file.");
+  }
+} catch (error) {
+  alert("Failed to download templates.");
+}
+
+};
+
+return ( <div className="p-3"> <TemplateTypeSelector options={templateTypeList.map(template => template.template_type_name)} setSelectedTemplateType={handleTemplateTypeSelect} />
+
+{selectedTemplateType && (
+    <TemplateSelector 
+      templateTypeId={selectedTemplateType.template_type_id}
+      setSelectedTemplate={handleTemplateSelect}
+    />
+  )}
+
+  {currentTemplate && (
+    <div>
+      <span>{currentTemplate.template_name}</span>
+      <select 
+        value={currentTemplate.selectedPeriod || ""}
+        onChange={(e) => setCurrentTemplate(prev => prev ? { ...prev, selectedPeriod: e.target.value } : null)}
+        disabled={selectedTemplateType?.template_type_format === "vertical"}
+      >
+        <option value="">Select a period</option>
+        <option value="LTM">LTM</option>
+        <option value="YTD">YTD</option>
+        <option value="Yearly">Yearly</option>
+      </select>
+      <DateSelector 
+        selectedStartDate={currentTemplate.startDate}
+        selectedEndDate={currentTemplate.endDate}
+        setSelectedStartDate={() => {}}
+        setSelectedEndDate={() => {}}
+        hideEndDate={selectedTemplateType?.template_type_format === "vertical"}
+      />
+      <button onClick={handleAddToList} disabled={selectedTemplateType?.template_type_format === "vertical"}>Add to List</button>
+    </div>
+  )}
+
+  <button onClick={handleDownloadTemplate}>Download Templates</button>
+  <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)}>
+    <TemplateTable templateItems={selectedTemplates.flatMap(t => t.template_items)} />
+  </Modal>
+</div>
+
+); };
+
+export default Page;
+
 
